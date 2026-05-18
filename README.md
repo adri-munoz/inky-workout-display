@@ -2,6 +2,8 @@
 
 Displays your Strava activity summary on a [Pimoroni Inky Impression 7.3"](https://shop.pimoroni.com/products/inky-impression-7-3) e-ink display connected to a Raspberry Pi.
 
+<img src="https://github.com/user-attachments/assets/6a50f0a9-7465-42c8-90d7-6bf7dcfb3c85" />
+
 ## What it shows
 
 - Weekly activity summary (runs, cycling rides, swims, strength, racketsports and yoga)
