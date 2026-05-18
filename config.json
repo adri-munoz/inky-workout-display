@@ -1,0 +1,20 @@
+{
+  "display": {
+    "resolution": [
+      800,
+      480
+    ],
+    "orientation": "horizontal",
+    "saturation": 0.5
+  },
+  "plugin_settings": {
+    "display_mode": "combined",
+    "time_mode": "rolling",
+    "days_back": 7,
+    "time_type": "moving_time",
+    "access_token": "",
+    "refresh_token": "",
+    "token_expires_at": 0
+  },
+  "refresh_interval_minutes": 60
+}

@@ -1,0 +1,15 @@
+[Unit]
+Description=Standalone Workout Inky Impression Display
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/workout-display
+ExecStart=/usr/bin/python3 main.py --loop
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
