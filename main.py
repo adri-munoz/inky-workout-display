@@ -34,6 +34,8 @@ def run_once(args, config):
     settings.update(config["display"])
     settings["strava_client_id"] = os.getenv("STRAVA_CLIENT_ID")
     settings["strava_client_secret"] = os.getenv("STRAVA_CLIENT_SECRET")
+    settings["garmin_email"] = os.getenv("GARMIN_EMAIL")
+    settings["garmin_password"] = os.getenv("GARMIN_PASSWORD")
     
     # Track tokens for persistence
     initial_tokens = {

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Setup script for Strava Inky Impression display
+# Setup script for Workout Inky Impression display
 
 set -e
 
@@ -38,8 +38,10 @@ if [ ! -f ".env" ]; then
     cat > .env << 'EOF'
 STRAVA_CLIENT_ID=your_client_id_here
 STRAVA_CLIENT_SECRET=your_client_secret_here
+GARMIN_EMAIL=your_email@example.com
+GARMIN_PASSWORD=your_garmin_password_here
 EOF
-    echo ".env file created. Fill in your Strava API credentials."
+    echo ".env file created. Fill in credentials for your selected data source."
 fi
 
 # Set up systemd service
@@ -72,10 +74,13 @@ echo ""
 echo "Setup complete! A reboot is required for I2C/SPI changes to take effect."
 echo ""
 echo "After rebooting:"
-echo "  1. Fill in your Strava credentials in .env"
-echo "  2. Run authorization once: source .venv/bin/activate && python3 authorize.py"
-  echo "  3. Start the service: sudo systemctl start workout-display"
-  echo "  4. Check logs: sudo journalctl -u workout-display -f"
+echo "  1. Set plugin_settings.use_garmin in config.json for Garmin (true) or Strava (false)"
+echo "  2. Fill in credentials for your selected data source in .env"
+echo "  3. Authorize once:"
+echo "     Garmin: source .venv/bin/activate && python3 authorize_garmin.py"
+echo "     Strava: source .venv/bin/activate && python3 authorize.py"
+echo "  4. Start the service: sudo systemctl start workout-display"
+echo "  5. Check logs: sudo journalctl -u workout-display -f"
 echo ""
 read -p "Reboot now? [y/N] " answer
 if [[ "$answer" =~ ^[Yy]$ ]]; then

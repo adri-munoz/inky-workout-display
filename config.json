@@ -8,10 +8,13 @@
     "saturation": 0.5
   },
   "plugin_settings": {
+    "use_garmin": true,
     "display_mode": "combined",
     "time_mode": "rolling",
     "days_back": 7,
     "time_type": "moving_time",
+    "garmin_token_dir": ".garmin_session",
+    "garmin_token_file_name": "garmin_tokens.json",
     "access_token": "",
     "refresh_token": "",
     "token_expires_at": 0

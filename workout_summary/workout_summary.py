@@ -3,7 +3,21 @@ from utils.app_utils import get_font
 import logging
 import requests
 import os
+import sys
 from datetime import datetime, timedelta
+
+try:
+    from garminconnect import (
+        Garmin,
+        GarminConnectAuthenticationError,
+        GarminConnectConnectionError,
+        GarminConnectTooManyRequestsError,
+    )
+except ImportError:
+    Garmin = None
+    GarminConnectAuthenticationError = Exception
+    GarminConnectConnectionError = Exception
+    GarminConnectTooManyRequestsError = Exception
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +35,9 @@ YOGA_TYPES     = {'Yoga'}
 
 class WorkoutDisplay:
     """
-    Renders a Strava activity summary image for the Inky Impression e-ink display.
+    Renders a workout activity summary image for the Inky Impression e-ink display.
 
-    Displays aggregated totals for activities from Strava:
+    Displays aggregated totals for activities from the configured source:
     - Total distance and moving time for all activities
     - Running-specific totals
     - Cycling-specific totals
@@ -35,10 +49,10 @@ class WorkoutDisplay:
 
     def render(self, settings):
         """
-        Generate and return a PIL image displaying Strava activity summaries.
+        Generate and return a PIL image displaying workout activity summaries.
 
         Args:
-            settings (dict): Merged display and plugin settings plus Strava credentials.
+            settings (dict): Merged display and plugin settings plus data source credentials.
 
         Returns:
             PIL.Image.Image: The rendered image to be displayed on the device.
@@ -54,14 +68,12 @@ class WorkoutDisplay:
         draw = ImageDraw.Draw(image)
 
         try:
-            # Get access token (with automatic refresh if needed)
-            access_token = self._get_valid_access_token(settings)
-            
             # Load configuration
             display_mode = settings.get("display_mode", "summary")
             time_mode = settings.get("time_mode", "rolling")
             days_back = int(settings.get("days_back", 7))
             time_type = settings.get("time_type", "moving_time")  # 'moving_time' or 'elapsed_time'
+            use_garmin = is_enabled(settings.get("use_garmin", False))
             
             # Calculate date range based on mode
             if time_mode == "current_week":
@@ -77,8 +89,12 @@ class WorkoutDisplay:
                 after_date = display_start_date - timedelta(seconds=1)
                 period_label = f"Last {days_back} Days" if days_back != 1 else "Today"
 
-            # Fetch activities from Strava
-            activities = fetch_strava_activities(access_token, after_date)
+            # Fetch activities from the configured source.
+            if use_garmin:
+                activities = fetch_garmin_activities(settings, display_start_date, datetime.now())
+            else:
+                access_token = self._get_valid_access_token(settings)
+                activities = fetch_strava_activities(access_token, after_date)
 
             if not activities:
                 render_message(draw, width, height, "No activities found", period_label)
@@ -170,7 +186,7 @@ class WorkoutDisplay:
 
 
 # ============================================================================
-# STRAVA API CLIENT
+# ACTIVITY API CLIENTS
 # ============================================================================
 
 def get_current_week_start():
@@ -187,6 +203,29 @@ def get_current_week_start():
     # Set to beginning of Monday (00:00:00)
     monday_start = monday.replace(hour=0, minute=0, second=0, microsecond=0)
     return monday_start, "This week"
+
+
+def is_enabled(value):
+    """Return a bool for JSON booleans and common string representations."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def get_activity_time(activity, time_field, sport_type):
+    """Return the display duration, using full session length for strength training."""
+    selected_time = int(float(activity.get(time_field, 0) or 0))
+
+    if sport_type in STRENGTH_TYPES:
+        return max(
+            selected_time,
+            int(float(activity.get("duration", 0) or 0)),
+            int(float(activity.get("elapsed_time", 0) or 0)),
+        )
+
+    return selected_time
 
 
 def fetch_strava_activities(access_token, after_date):
@@ -234,6 +273,140 @@ def fetch_strava_activities(access_token, after_date):
     activities = response.json()
     logger.info(f"Fetched {len(activities)} activities from Strava")
     return activities
+
+
+def fetch_garmin_activities(settings, start_datetime, end_datetime):
+    """
+    Fetch activities from Garmin Connect and normalize them to the Strava-like
+    activity shape used by the renderer.
+
+    Args:
+        settings (dict): Plugin settings plus Garmin credentials.
+        start_datetime (datetime): Start of the displayed period.
+        end_datetime (datetime): End of the displayed period.
+
+    Returns:
+        list: List of normalized activity dictionaries.
+
+    Raises:
+        Exception: If Garmin credentials are missing, garminconnect is not
+            installed, or Garmin authentication/fetching fails.
+    """
+    if Garmin is None:
+        raise Exception("Garmin support requires garminconnect. Run: pip install -r requirements.txt")
+
+    email = settings.get("garmin_email")
+    password = settings.get("garmin_password")
+    if not email or not password:
+        raise Exception("GARMIN_EMAIL and GARMIN_PASSWORD must be set in .env when use_garmin is true")
+
+    token_dir = settings.get("garmin_token_dir", ".garmin_session")
+    token_file_name = settings.get("garmin_token_file_name", "garmin_tokens.json")
+    os.makedirs(token_dir, exist_ok=True)
+    tokenstore = os.path.join(token_dir, token_file_name)
+
+    start_date = start_datetime.date()
+    end_date = end_datetime.date()
+
+    try:
+        client = Garmin(email=email, password=password, prompt_mfa=_prompt_garmin_mfa)
+        logger.info(f"Logging in to Garmin Connect (tokenstore: {tokenstore})")
+        client.login(tokenstore)
+
+        logger.info(f"Fetching Garmin activities from {start_date.isoformat()} to {end_date.isoformat()}")
+        raw_activities = client.get_activities_by_date(start_date.isoformat(), end_date.isoformat())
+    except GarminConnectAuthenticationError as e:
+        raise Exception(f"Garmin authentication failed: {e}")
+    except GarminConnectTooManyRequestsError as e:
+        raise Exception(f"Garmin rate limit reached: {e}")
+    except GarminConnectConnectionError as e:
+        raise Exception(f"Garmin connection failed: {e}")
+
+    activities = [normalize_garmin_activity(activity) for activity in (raw_activities or [])]
+    logger.info(f"Fetched {len(activities)} activities from Garmin")
+    return activities
+
+
+def _prompt_garmin_mfa():
+    """Prompt for Garmin MFA during one-time interactive authentication."""
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            "Garmin MFA is required, but this process is not interactive. "
+            "Run `python3 authorize_garmin.py` first, then restart the service."
+        )
+
+    return input("Enter Garmin MFA code: ").strip()
+
+
+def normalize_garmin_activity(activity):
+    """
+    Convert a Garmin Connect activity payload into the small subset of Strava
+    fields used by aggregation and calendar rendering.
+    """
+    activity_type = activity.get("activityType") or {}
+    type_key = str(activity_type.get("typeKey", "")).lower()
+    sport_type = map_garmin_sport_type(type_key)
+    duration_seconds = int(float(activity.get("duration", activity.get("elapsedDuration", 0)) or 0))
+    moving_seconds = int(float(activity.get("movingDuration", activity.get("duration", 0)) or 0))
+    elapsed_seconds = int(float(activity.get("elapsedDuration", activity.get("duration", 0)) or 0))
+
+    if sport_type in STRENGTH_TYPES:
+        moving_seconds = duration_seconds or elapsed_seconds or moving_seconds
+
+    return {
+        "id": activity.get("activityId"),
+        "name": activity.get("activityName", "Garmin Workout"),
+        "distance": float(activity.get("distance", 0) or 0),
+        "duration": duration_seconds,
+        "moving_time": moving_seconds,
+        "elapsed_time": elapsed_seconds,
+        "sport_type": sport_type,
+        "type": sport_type,
+        "start_date": garmin_datetime_to_iso(activity.get("startTimeGMT") or activity.get("startTimeLocal")),
+        "start_date_local": garmin_datetime_to_iso(activity.get("startTimeLocal")),
+    }
+
+
+def map_garmin_sport_type(type_key):
+    """Map Garmin activity type keys to the Strava-style sport names already used by the display."""
+    if not type_key:
+        return ""
+
+    if "strength" in type_key or "weight" in type_key:
+        return "WeightTraining"
+    if "treadmill" in type_key:
+        return "Treadmill"
+    if "trail" in type_key and "run" in type_key:
+        return "TrailRun"
+    if "run" in type_key:
+        return "Run"
+    if "swim" in type_key:
+        return "Swim"
+    if any(key in type_key for key in ("bike", "biking", "cycle", "cycling", "cyclocross")):
+        return "Ride"
+    if "tennis" in type_key:
+        return "Tennis"
+    if "padel" in type_key or "paddel" in type_key:
+        return "Padel"
+    if "yoga" in type_key:
+        return "Yoga"
+
+    return type_key
+
+
+def garmin_datetime_to_iso(value):
+    """Convert Garmin datetime strings to ISO strings accepted by the existing renderer."""
+    if not value:
+        return ""
+
+    value = str(value).strip()
+    if "T" in value:
+        return value
+
+    try:
+        return datetime.fromisoformat(value.replace(" ", "T")).isoformat()
+    except ValueError:
+        return value
 
 
 def refresh_access_token(client_id, client_secret, refresh_token):
@@ -322,8 +495,8 @@ def aggregate_activities(activities, time_field='moving_time'):
     for activity in activities:
         # Safely extract fields (handle missing data)
         distance_meters = activity.get('distance', 0) or 0
-        activity_time = activity.get(time_field, 0) or 0  # Use selected time field
         sport_type = activity.get('sport_type') or activity.get('type', '')
+        activity_time = get_activity_time(activity, time_field, sport_type)
 
         # Extract day string for day counting
         date_str = activity.get('start_date_local') or activity.get('start_date', '')
@@ -405,7 +578,7 @@ def group_activities_by_day(activities, start_date, time_field='moving_time'):
             
             # Determine activity type icon name
             sport_type = activity.get('sport_type') or activity.get('type', '')
-            activity_time = activity.get(time_field, 0) or 0  # Use selected time field
+            activity_time = get_activity_time(activity, time_field, sport_type)
             distance_meters = activity.get('distance', 0) or 0
             
             if sport_type in RUNNING_TYPES:

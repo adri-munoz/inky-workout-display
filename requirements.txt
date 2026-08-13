@@ -3,3 +3,4 @@ requests>=2.28.0
 python-dotenv>=1.0.0
 inky>=2.3.0
 numpy
+garminconnect>=0.3.3
